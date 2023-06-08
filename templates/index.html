@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=yes">
+        <title>Watermarking of medical images</title>
+        <link rel="stylesheet" href="css/bootstrap.min.css">
+        <script src="js/jquery-3.6.4.min.js" ></script>
+        <script src="js/bootstrap.min.js" ></script>
+        <style>
+            .browse-source-image {
+                display: none;
+                /* visibility: hidden; */
+                width: 0px; height: 0px; opacity: 0px; position: fixed; top: -100%;
+            }
+            .extraction-patient-info .col-8 {
+                font-weight: bolder;
+            }
+
+            .processingContainer {
+                position: fixed;
+                top: 0;
+                left: 0;
+                z-index: 100;
+                width: 100vw;
+                height: 100vh;
+                display: flex; justify-content: center; align-items: center; flex-direction: row; flex-wrap: nowrap;
+                background: rgba(0, 0, 0, 0.8);
+                visibility: hidden;
+                opacity: 0;
+                transition: visibility 0s, opacity 0.5s linear;
+            }
+            .processingContainer p {
+                font-size: 30px;
+                color: #fff;
+                font-weight: bolder;
+            }
+            #header {
+                position: fixed;
+                z-index: 99;
+                /* background: #fff; */
+                /* top: 0px; */
+                /* left: 0px; */
+                /* padding-top: 20px; */
+                /* width: 100%; */
+                box-shadow: 0px 3px 7px 1px #bbb;
+            }
+            #LSBer-tabContent {
+                margin-top: 80px;
+            }
+        </style>
+        <script>
+
+            //################################################
+            //              Constants
+            //################################################
+            const JUST_UPLOAD = 0, DETECT_POINTS = 1, FILTER = 2
+
+
+            //################################################
+            //              Main Script
+            //################################################
+            $(async ()=>{
+
+                renderInsertion()
+                renderExtraction()
+                renderAttack()
+
+            })
+
+
+            //################################################
+            //              Insertion
+            //################################################
+            const renderInsertion = () => {
+                initInsertionFirstContainer()
+                handleSourceImageInput()
+                initInsertionThirdContainer()
+                handleInsertionProcess()
+            }
+
+            const initInsertionFirstContainer = () => {
+                $("#insertion-accordion").find(".accordion-item").first().find(".accordion-button").click()
+                
+                $(".source-image, .harris-source-image").attr({"src": ""}).hide()
+                $(".source-image-name, .source-image-size, .harris-points").html("")
+                $(".info-source-image").css({opacity: 0})
+                $(".harris-source-image-container, .points-source-image-container").hide()
+                $("#insertion-accordion").find(".btn-browse-source-image").closest(".card").find(".card-body").css({"position": "absolute", "margin-top": "-30px"})
+                $("#insertion-accordion").find(".btn-browse-source-image").closest(".card").find(".card-footer").css({"position": "absolute"})
+            }
+
+            const handleSourceImageInput = () => {
+                $("#source-image-input").change(function(){
+                    let input = this
+                    const action = { type: DETECT_POINTS, index: 1 }
+                    handleFilesSelect(input, action, async(res)=>{
+                        initInsertionThirdContainer()
+                        const { sourceImage, size, harrisImageName, importantFeaturePoints } = res
+
+                        $(".source-image").attr({"src": `${await getImage(sourceImage)}`}).data({src: sourceImage}).show()
+                        $("#insertion-accordion").find(".btn-browse-source-image").closest(".card").find(".card-body").css({"position": "absolute", "margin-top": "0px"})
+                        $("#insertion-accordion").find(".btn-browse-source-image").closest(".card").find(".card-footer").css({"position": "static"})
+                        $("#insertion-accordion").find(".btn-browse-source-image").css({"background": "#00000088", "color": "#fff"})
+                        $(".info-source-image").css({opacity: 1})
+                        $(".source-image-name").html("Source image")//sourceImage)
+                        $(".source-image-size").html(getSize(size))
+                        
+                        $(".harris-source-image-container, .points-source-image-container").show()
+                        $(".harris-source-image").attr({"src": `${await getImage(harrisImageName)}`}).show()
+
+                        $(".harris-points").html("")
+                        importantFeaturePoints.map(point=>
+                            $(`<li class="list-group-item d-flex justify-content-around"><span>[${point.x}, ${point.y}]</span> <span class="badge bg-primary rounded-pill">${point.val}</span></li>`).appendTo(".harris-points")
+                        )
+                        $(".harris-source-points-count").html(importantFeaturePoints.length)
+
+                        $(".btn-image-insertion").removeClass("disabled").prop({disabled: false})
+                    })
+                })
+
+                $("#insertion-accordion").find(".btn-browse-source-image").click(function(){
+                    $("#source-image-input").click()
+                })
+            }
+
+            const initInsertionThirdContainer = () => {
+                $(".watermarked-image").attr({"src": ""}).hide()
+                $(".watermarked-image-link").html("Download").attr({href: ``, download: ``, target: ""}) 
+                $(".insertion-binary").val("").closest(".card").hide()
+                $(".watermarked-image-size").html("")
+                // $(".watermarked-image-info").css({opacity: 0})
+                $(".watermarked-image-container").hide()
+                $(".btn-image-insertion").addClass("disabled").prop({disabled: true})
+                hideToast()
+                $(".insertion-key").off("input").on("input", function(){
+                    const value = $(this).val()
+                    const disabled = value.length!=16
+                    if(disabled){
+                        $(".btn-image-insertion").addClass("disabled").prop({disabled: true})
+                        $(this).prev().addClass("text-danger")
+                    }else{
+                        $(".btn-image-insertion").removeClass("disabled").prop({disabled: false})
+                        $(this).prev().removeClass("text-danger")
+                    }
+                })
+            }
+
+            const handleInsertionProcess = () => {
+                initInsertionThirdContainer()
+
+                $(".btn-image-insertion").click(function(){
+                    let formInsertion = {
+                        src: $(".source-image").data().src,
+                        data: {
+                            firstName:          $(".insertion-first-name").val(),
+                            lastName:           $(".insertion-last-name").val(),
+                            age:                $(".insertion-age").val(),
+                            sex:                $(".insertion-sex").find("input[type='radio'][name='sex']:checked").val()[0],
+                            clinicName:         $(".insertion-clinic-name").val(),
+                        },
+                        hospitalSignature:  $(".insertion-hospital-signature").val(),
+                        key: $(".insertion-key").val()
+                    }
+                    // formInsertion = Object.values(formInsertion)
+
+                    $.ajax({
+                        url: "/insertion",
+                        type: "POST",
+                        data: JSON.stringify(formInsertion),
+                        contentType: "application/json; charset=utf-8",
+                        beforeSend: ( xhr ) => {
+                            showProcessingContainer()
+                        }
+                    })
+                    .done(async ( res ) => {
+                        
+                        const { binary, watermarkedImageName, size, issues, message } = res
+                        if(issues!=null){
+                            showToast("danger", message)
+                            return
+                        }
+                        showToast("success", message)// .join("")
+                        $(".insertion-binary").prev().html(`(${binary.length}) bits`)
+                        $(".insertion-binary").val(binary).closest(".card").show()
+                        $(".watermarked-image").attr({"src": `${await getImage(watermarkedImageName)}`}).data({src: watermarkedImageName}).show()
+                        // $(".watermarked-image-info").css({opacity: 1})
+                        $(".watermarked-image-link").html("Download").attr({href: `/download/${watermarkedImageName}`, download: `${watermarkedImageName}`, target: "_blank"}) 
+                        $(".watermarked-image-size").html(getSize(size))
+                        $(".watermarked-image-container").show()
+                    })
+                    .fail( ( jqXHR, textStatus ) => {
+                        // console.log(jqXHR.responseText) // status statusText responseText
+                    })
+                    .always( (res) => {
+                        hideProcessingContainer()
+                    })
+                })
+            }
+
+
+            //################################################
+            //              Extraction
+            //################################################
+            const renderExtraction = () => {
+                initExtractionFirstContainer()
+                handleWatermarkedImageInput()
+                initExtractionSecondContainer()
+                handleExtractionProcess()
+            }
+
+            const initExtractionFirstContainer = () => {
+                $("#extraction-accordion").find(".accordion-item").first().find(".accordion-button").click()
+                
+                $(".extraction-source-image, .extraction-harris-source-image").attr({"src": ""}).hide()
+                $(".extraction-source-image-name, .extraction-source-image-size, .extraction-harris-points").html("")
+                $(".extraction-info-source-image").css({opacity: 0})
+                $(".extraction-harris-source-image-container, .extraction-points-source-image-container").hide()
+                $("#extraction-accordion").find(".btn-browse-source-image").closest(".card").find(".card-body").css({"position": "absolute", "margin-top": "-30px"})
+                $("#extraction-accordion").find(".btn-browse-source-image").closest(".card").find(".card-footer").css({"position": "absolute"})
+            }
+
+            const handleWatermarkedImageInput = () => {
+                $("#watermarked-image-input").change(function(){
+                    let input = this
+                    const action = { type: DETECT_POINTS, index: 1 }
+                    handleFilesSelect(input, action, async (res)=>{
+                        initExtractionSecondContainer()
+                        const { sourceImage, size, harrisImageName, importantFeaturePoints } = res
+                        $(".extraction-source-image").attr({"src": `${await getImage(sourceImage)}`}).data({src: sourceImage}).show()
+                        $("#extraction-accordion").find(".btn-browse-source-image").closest(".card").find(".card-body").css({"position": "absolute", "margin-top": "0px"})
+                        $("#extraction-accordion").find(".btn-browse-source-image").closest(".card").find(".card-footer").css({"position": "static"})
+                        $("#extraction-accordion").find(".btn-browse-source-image").css({"background": "#00000088", "color": "#fff"})
+                        $(".extraction-info-source-image").css({opacity: 1})
+                        $(".extraction-source-image-name").html("Watermarked image")
+                        $(".extraction-source-image-size").html(getSize(size))
+                        
+                        $(".extraction-harris-source-image-container, .extraction-points-source-image-container").show()
+                        $(".extraction-harris-source-image").attr({"src": `${await getImage(harrisImageName)}`}).show()
+
+                        $(".extraction-harris-points").html("")
+                        importantFeaturePoints.map(point=>
+                            $(`<li class="list-group-item d-flex justify-content-around"><span>[${point.x}, ${point.y}]</span> <span class="badge bg-primary rounded-pill">${point.val}</span></li>`).appendTo(".extraction-harris-points")
+                        )
+                        $(".extraction-harris-source-points-count").html(importantFeaturePoints.length)
+
+                        $(".btn-image-extraction").removeClass("disabled").prop({disabled: false})
+                    })
+                })
+
+                $("#extraction-accordion").find(".btn-browse-source-image").click(function(){
+                    $("#watermarked-image-input").click()
+                })
+            }
+
+            const initExtractionSecondContainer = () => {
+                $(".extraction-binary").val("").closest(".card").hide()
+                $(".extraction-patient-info").val("").closest(".card").hide()
+                $(".btn-image-extraction").addClass("disabled").prop({disabled: true})
+                hideToast()
+                $(".extraction-key").off("input").on("input", function(){
+                    const value = $(this).val()
+                    const disabled = value.length!=16
+                    if(disabled){
+                        $(".btn-image-extraction").addClass("disabled").prop({disabled: true})
+                        $(this).prev().addClass("text-danger")
+                    }else{
+                        $(".btn-image-extraction").removeClass("disabled").prop({disabled: false})
+                        $(this).prev().removeClass("text-danger")
+                    }
+                })
+            }
+
+            const handleExtractionProcess = () => {
+                initExtractionSecondContainer()
+
+                $(".btn-image-extraction").click(function(){
+                    let formExtraction = {
+                        src: $(".extraction-source-image").data().src,
+                        // data: {},       
+                        key: $(".extraction-key").val()
+                    }
+                    // formExtraction = Object.values(formExtraction)
+
+                    $.ajax({
+                        url: "/extraction",
+                        type: "POST",
+                        data: JSON.stringify(formExtraction),
+                        contentType: "application/json; charset=utf-8",
+                        beforeSend: ( xhr ) => {
+                            showProcessingContainer()
+                        }
+                    })
+                    .done(( res ) => {
+                        // watermarkedImageName, size, issues, message
+                        const { binary, data } = res
+                        // if(issues!=null){
+                        //     showToast("danger", message)
+                        //     return
+                        // }
+                        // showToast("success", message)
+                        $(".extraction-binary").prev().html(`(${binary.length}) bits`)
+                        $(".extraction-binary").val(binary).closest(".card").show()
+                        $(".extraction-patient-info").closest(".card").show()
+                        // data.join('\n')
+                        $(".extraction-first-name, .extraction-last-name, .extraction-age, .extraction-sex, .extraction-clinic-name, .extraction-hospital-signature").html("")
+                        const [ firstName, lastName, age, sex, clinicName, hospitalSignature ] = data
+                        $(".extraction-first-name").html(firstName)
+                        $(".extraction-last-name").html(lastName)
+                        $(".extraction-age").html(age)
+                        $(".extraction-sex").html(sex)
+                        $(".extraction-clinic-name").html(clinicName)
+                        $(".extraction-hospital-signature").html(hospitalSignature)
+
+                    })
+                    .fail( ( jqXHR, textStatus ) => {
+                        // console.log(jqXHR.responseText) // status statusText responseText
+                    })
+                    .always( (res) => {
+                        hideProcessingContainer()
+                    })
+                })
+            }
+
+
+            //################################################
+            //              Attack
+            //################################################
+            const renderAttack = () => {
+                initAttackFirstContainer()
+                handleAttackedImageInput()
+                handleFilterImageRadio()
+            }
+
+            const initAttackFirstContainer = () => {
+                // .click()
+                const $btn = $("#attack-accordion").find(".accordion-item").first().find(".accordion-button")
+                if($btn.hasClass("collapsed")) $btn.click()
+
+                $(".attack-source-image, .attack-harris-source-image").attr({"src": ""}).hide()
+                $(".attack-source-image-name, .attack-source-image-size, .attack-harris-points").html("")
+                $(".attack-info-source-image").css({opacity: 0})
+                $(".attack-harris-source-image-container, .attack-points-source-image-container").hide()
+                $("#attack-accordion").find(".btn-browse-source-image").closest(".card").find(".card-body").css({"position": "absolute", "margin-top": "-30px"})
+                $("#attack-accordion").find(".btn-browse-source-image").closest(".card").find(".card-footer").css({"position": "absolute"})
+            
+                $(".attack-filter-container").hide()
+                $(".attack-image-container").hide()
+            }
+
+            const handleAttackedImageInput = () => {
+                $("#attacked-image-input").change(function(){
+                    let input = this
+                    // const index = $("#filter-container .btn-check:checked").attr("value")
+                    const action = { type: JUST_UPLOAD }
+                    handleFilesSelect(input, action, async (res)=>{
+                        initAttackFirstContainer()
+                        const { ImageName, size } = res
+                        $(".attack-source-image").attr({"src": `${await getImage(ImageName)}`}).data({src: ImageName}).show()
+                        
+                        $("#attack-accordion").find(".btn-browse-source-image").closest(".card").find(".card-body").css({"position": "absolute", "margin-top": "0px"})
+                        $("#attack-accordion").find(".btn-browse-source-image").closest(".card").find(".card-footer").css({"position": "static"})
+                        $("#attack-accordion").find(".btn-browse-source-image").css({"background": "#00000088", "color": "#fff"})
+                        $(".attack-info-source-image").css({opacity: 1})
+                        $(".attack-source-image-name").html("Source image")
+                        $(".attack-source-image-size").html(getSize(size))
+                        
+                        $(".attack-filter-container").show()
+                    })
+                })
+
+                $("#attack-accordion").find(".btn-browse-source-image").click(function(){
+                    $("#attacked-image-input").click()
+                })
+            }
+
+            const handleFilterImageRadio = () => {
+
+                $("#filter-container .btn-check").click(function(){
+                    $("#filter-container .btn-check").prop({checked: false})
+                    $(this).prop({checked: true})
+                    handleFilterChange()
+                })
+
+                $("#filter-value").change(function(){
+                    handleFilterChange()
+                })
+
+                const handleFilterChange = () => {
+                    const filterIndex = parseInt($("#filter-container .btn-check:checked").attr("value"))
+                    const value = parseInt($("#filter-value").val())
+                    const formAttack = { src: $(".attack-source-image").data().src, filter: filterIndex, value: value }
+                    // console.log(formAttack)
+                    $.ajax({
+                        url: "/filter",
+                        type: "POST",
+                        data: JSON.stringify(formAttack),
+                        contentType: "application/json; charset=utf-8",
+                        beforeSend: ( xhr ) => {
+                            showProcessingContainer()
+                        }
+                    })
+                    .done(async ( res ) => {
+                        const { attackedImageName, size } = res
+                        // if(issues!=null){
+                        //     showToast("danger", message)
+                        //     return
+                        // }
+                        // showToast("success", message)
+                        
+                        $(".attack-image").attr({"src": `${await getImage(attackedImageName)}`}).data({src: attackedImageName}).show()
+                        $(".attack-image-link").html("Download").attr({href: `/download/${attackedImageName}`, download: `${attackedImageName}`, target: "_blank"}) 
+                        $(".attack-image-size").html(getSize(size))
+                        $(".attack-image-container").show()
+
+                    })
+                    .fail( ( jqXHR, textStatus ) => {
+                        // console.log(jqXHR.responseText) // status statusText responseText
+                    })
+                    .always( (res) => {
+                        hideProcessingContainer()
+                    })
+                }
+            }
+
+
+            //################################################
+            //              Helper
+            //################################################
+            const getImage = async (sourceImage) => {
+                // const response = await fetch(`/get/${sourceImage}`)
+                // const data = await response.json()
+                // return data.b64
+                return `/get/${sourceImage}`
+            }
+
+            const getSize = (size) => `${(size/1024).toFixed(2)}Kb`
+
+            const handleFilesSelect = async (input, action, successCallback, errorCallback)=>{
+                if(!input?.files?.length!=0) return
+                let formData = new FormData()
+                formData.append("action", JSON.stringify(action))
+                for (const file of input.files)
+                    formData.append("file", file)
+
+                uploadImages(formData, successCallback, errorCallback)
+            }
+
+            const uploadImages = async (formdata, successCallback, errorCallback) => {
+                return $.ajax({
+                    url: "/upload",
+                    type: "POST",
+                    data: formdata,
+                    processData: false,
+                    contentType: false,
+                    beforeSend: ( xhr ) => {
+                        showProcessingContainer()
+                    }
+                })
+                .done(( res ) => {
+                    successCallback(res)
+                })
+                .fail( ( jqXHR, textStatus ) => {
+                    errorCallback(textStatus)
+                })
+                .always( (res) => {
+                    hideProcessingContainer()
+                })
+            }
+
+            const showToast = (type, text) => {
+                const $toast = $("#info-toast")
+                $toast.find(".toast-header, .toast-body").removeClass("alert-success alert-danger")
+                $toast.find(".toast-header, .toast-body").addClass(`alert alert-${type}`)
+                // $toast.find(".title").addClass(`text-${type}`)
+                switch (type){
+                    case "success":
+                        $toast.find(".title").html("Well done!")
+                        break
+                    case "danger":
+                        $toast.find(".title").html("An error occurred!")
+                        break
+                }
+                $toast.find(".toast-body").html(text)
+                const bsAlert = new bootstrap.Toast($toast[0], {delay: 5000, autohide: true, animation: true})
+                bsAlert.hide()
+                bsAlert.show()
+            }
+
+            const hideToast = () => {
+                new bootstrap.Toast($("#info-toast")).hide()
+            }
+
+            const showProcessingContainer = () => {
+                $(".processingContainer").css({"opacity": "1", "visibility": "visible"})
+                $(".clocks-list").html("").hide()
+            }
+
+            const hideProcessingContainer = () => {
+                $(".processingContainer").css({"opacity": "0", "visibility": "hidden"})
+                $(".clocks-list").show()
+            }
+
+        </script>
+    </head>
+    <body>
+
+        <div class="processingContainer" >
+            <p class="info" >Processing ...</p>
+        </div>
+
+        
+        <div class="position-fixed bottom-0 end-0" style="z-index: 11">
+            <div id="info-toast" class="toast hide" role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="toast-header">
+                    <strong class="me-auto title"></strong>
+                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+                <div class="toast-body">
+                </div>
+            </div>
+        </div>
+
+        <!-- image/bmp, image/png, image/jpeg, image/jpg, image/tif, image/tiff -->
+        <form name="formUploadSourceImage" action="/" method="post" enctype="multipart/form-data">
+            <input id="source-image-input" class="browse-source-image" type="file" name="file" multiple="false" accept="image/bmp, image/png, image/jpeg, image/jpg, image/tif, image/tiff" />
+        </form>
+
+        <form name="formUploadWatermarkedImage" action="/" method="post" enctype="multipart/form-data">
+            <input id="watermarked-image-input" class="browse-source-image" type="file" name="file" multiple="false" accept="image/bmp, image/png, image/jpeg, image/jpg, image/tif, image/tiff" />
+        </form>
+
+        <form name="formUploadAttackedImage" action="/" method="post" enctype="multipart/form-data">
+            <input id="attacked-image-input" class="browse-source-image" type="file" name="file" multiple="false" accept="image/bmp, image/png, image/jpeg, image/jpg, image/tif, image/tiff" />
+        </form>
+
+
+        <div class="container p-2" >
+
+            <nav class="navbar fixed-top navbar-light bg-light" id="header">
+                <div class="container-fluid">
+                    <div class="row w-100">
+                        <div class="col-3 d-flex align-items-center">
+                            <blockquote class="blockquote">
+                                <p>Watermarking of Medical Image</p>
+                            </blockquote>
+                        </div>
+                        <div class="col-4 d-flex justify-content-center" >
+                            <ul class="nav nav-tabs_ nav-pills nav-fill_ small" id="LSBer-tab" role="tablist">
+                                <li class="nav-item h5_" role="presentation">
+                                    <button class="nav-link active" id="insertion-tab" data-bs-toggle="tab" data-bs-target="#insertion-tab-pane" type="button" role="tab" aria-controls="insertion-tab-pane" aria-selected="true">Insertion</button>
+                                </li>
+                                <li class="nav-item h5_" role="presentation">
+                                    <button class="nav-link" id="extraction-tab" data-bs-toggle="tab" data-bs-target="#extraction-tab-pane" type="button" role="tab" aria-controls="extraction-tab-pane" aria-selected="false">Extraction</button>
+                                </li>
+                                <li class="nav-item h5_" role="presentation">
+                                    <button class="nav-link" id="attack-tab" data-bs-toggle="tab" data-bs-target="#attack-tab-pane" type="button" role="tab" aria-controls="attack-tab-pane" aria-selected="false">Attack</button>
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="col-5 small" >
+                            <figure>
+                                <blockquote class="blockquote"></blockquote>
+                                <figcaption class="blockquote-footer">
+                                    i tried to implement the watermarking approach that presented on this <a class="text-dark" href="https://www.researchgate.net/publication/236166546_A_Watermarking_of_Medical_Image_Method_Based_LSB" target="_blank" ><cite title=""><strong>Article</strong></cite></a>
+                                </figcaption>
+                                <figcaption class="blockquote-footer">
+                                    source code available on my <a class="text-dark" href="https://github.com/DEVLOKER/Watermarking-Medical-Image" target="_blank" ><cite title=""><strong>Github</strong></cite></a>
+                                </figcaption>
+                            </figure>
+                        </div>
+                    </div>
+
+                </div>
+            </nav>
+
+            <div class="tab-content" id="LSBer-tabContent">
+                <div class="tab-pane fade show active p-4" id="insertion-tab-pane" role="tabpanel" aria-labelledby="insertion-tab" tabindex="0">
+
+                    <div class="accordion accordion-flush" id="insertion-accordion">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="harris-heading">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#harris-collapse" aria-expanded="false" aria-controls="harris-collapse">
+                                    <h1 class="display-6" style="font-size: 1.5rem;">#1 Detecting weak points using Harris algorithm</h1>
+                                </button>
+                            </h2>
+                            <div id="harris-collapse" class="accordion-collapse collapse" aria-labelledby="harris-heading" data-bs-parent_="#insertion-accordion" >
+                                <div class="accordion-body pt-5 pb-5" >
+
+                                    <div class="row" >
+                                        <div class="col" >
+                                            <div class="card border-0 text-center h-100 source-image-container" style="width: 18rem;">
+                                                <div class="card-header border-0 h-100 p-0 d-flex align-items-center">
+                                                    <img src="" class="card-img-top source-image" alt="...">
+                                                </div>
+                                                <div class="card-body w-100">
+                                                    <button class="btn btn-secondary m-0 btn-browse-source-image">Choose image ...</button>
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around info-source-image">
+                                                    <span class="card-muted text-truncate source-image-name"></span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill source-image-size"></span></span>
+                                                </div>
+                                            </div>
+                
+                                        </div>
+                                        <div class="col" >
+                        
+                                            <div class="card border-0 text-center h-100 harris-source-image-container" style="width: 18rem;">
+                                                <div class="card-header border-0 h-100 p-0 d-flex align-items-center">
+                                                    <img src="" class="card-img-top harris-source-image" alt="...">
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around">
+                                                    <span class="card-muted">Harris corner detection</span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill harris-source-points-count"></span></span>
+                                                </div>
+                                            </div>
+                
+                                        </div>
+                                        <div class="col" >
+                                            <div class="card text-center points-source-image-container" style="width: 18rem; max-height: 470px;">
+                                                <div class="card-body" style="overflow-y: scroll;">
+                                                    <ul class="list-group harris-points"></ul>
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around">
+                                                    <span class="card-muted">Important feature points</span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill harris-source-points-count"></span></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="patient-data-heading">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#patient-data-collapse" aria-expanded="false" aria-controls="patient-data-collapse">
+                                    <h1 class="display-6" style="font-size: 1.5rem;">#2 Patient Data</h1>
+                                </button>
+                            </h2>
+                            <div id="patient-data-collapse" class="accordion-collapse collapse" aria-labelledby="patient-data-heading" data-bs-parent_="#insertion-accordion">
+                                <div class="accordion-body pt-5 pb-5">
+
+                                    <div class="row" >
+                                        <div class="col">
+                                            <div class="card text-center">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Patient records</h5>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">First name</span>
+                                                        <input type="text" class="form-control insertion-first-name" placeholder="first name" value="dev" >
+                                                    </div>
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">Last name</span>
+                                                        <input type="text" class="form-control insertion-last-name" placeholder="last name" value="loker">
+                                                    </div>
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">Age</span>
+                                                        <input type="number" min="1" class="form-control insertion-age" placeholder="age" value="30">
+                                                    </div>
+                                                    <div class="row mb-3 insertion-sex" >
+                                                        <div class="col" >
+                                                            <div class="input-group">
+                                                                <div class="input-group-text">
+                                                                    <input class="form-check-input mt-0" type="radio" name="sex" value="male" aria-label="Male" checked>
+                                                                </div>
+                                                                <input type="text" class="form-control" value="Male" aria-label="Male" readonly>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col" >
+                                                            <div class="input-group">
+                                                                <div class="input-group-text">
+                                                                    <input class="form-check-input mt-0" type="radio" name="sex" value="Female" aria-label="Female">
+                                                                </div>
+                                                                <input type="text" class="form-control" value="Female" aria-label="Female" readonly >
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">Clinic name</span>
+                                                        <input type="text" class="form-control insertion-clinic-name" placeholder="clinic name" value="clinic01">
+                                                    </div>
+                                                </div>
+                                            </div>
+                
+                                        </div>
+                                        <div class="col" >
+                                            <div class="card text-center">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Hospital center</h5>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">Signature</span>
+                                                        <input type="text" class="form-control insertion-hospital-signature" placeholder="hospital signature" value="AE4569">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="watermarking-heading">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#watermarking-collapse" aria-expanded="false" aria-controls="watermarking-collapse">
+                                    <h1 class="display-6" style="font-size: 1.5rem;">#3 Watermarking</h1>
+                                </button>
+                            </h2>
+                            <div id="watermarking-collapse" class="accordion-collapse collapse" aria-labelledby="watermarking-heading" data-bs-parent_="#insertion-accordion">
+                                <div class="accordion-body pt-5 pb-5">
+
+                                    <div class="row" >
+                                        <div class="col">
+                                            <div class="card text-center">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Watermarking Key</h5>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text" id="watermarking-key">Key (16)</span>
+                                                        <input type="text" class="form-control insertion-key" placeholder="watermarking key" value="#My_SickRat_Key#">
+                                                    </div>
+                                                    <a class="btn btn-success btn-image-insertion">Insertion process</a>
+                                                </div>
+                                            </div>
+                                            <div class="card text-center mt-4">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Binary information</h5>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">Binary</span>
+                                                        <textarea class="form-control insertion-binary" aria-label="Binary information" rows="4"></textarea>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col d-flex justify-content-center">
+                                            <div class="card border-0 text-center watermarked-image-container" style="width: 18rem;">
+                                                <div class="card-header ">
+                                                    <h5 class="card-title">Watermarked image</h5>
+                                                </div>
+                                                <div class="card-body border-0_ h-100 p-0 d-flex align-items-center">
+                                                    <img src="" class="card-img-top watermarked-image" alt="...">
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around watermarked-image-info">
+                                                    <span class="card-muted"><a href="#" class="link watermarked-image-link">Download</a></span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill watermarked-image-size"></span></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+                <div class="tab-pane fade p-4" id="extraction-tab-pane" role="tabpanel" aria-labelledby="extraction-tab" tabindex="0">
+
+                    <div class="accordion accordion-flush" id="extraction-accordion">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="extraction-harris-heading">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#extraction-harris-collapse" aria-expanded="false" aria-controls="extraction-harris-collapse">
+                                    <h1 class="display-6" style="font-size: 1.5rem;">#1 Detecting weak points using Harris algorithm</h1>
+                                </button>
+                            </h2>
+                            <div id="extraction-harris-collapse" class="accordion-collapse collapse" aria-labelledby="extraction-harris-heading" data-bs-parent_="#extraction-accordion" >
+                                <div class="accordion-body pt-5 pb-5" >
+
+                                    <div class="row" >
+                                        <div class="col" >
+                                            <div class="card border-0 text-center h-100 extraction-source-image-container" style="width: 18rem;">
+                                                <div class="card-header border-0 h-100 p-0 d-flex align-items-center">
+                                                    <img src="" class="card-img-top extraction-source-image" alt="...">
+                                                </div>
+                                                <div class="card-body w-100">
+                                                    <button class="btn btn-secondary m-0 btn-browse-source-image">Choose image ...</button>
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around extraction-info-source-image">
+                                                    <span class="card-muted text-truncate extraction-source-image-name"></span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill extraction-source-image-size"></span></span>
+                                                </div>
+                                            </div>
+                
+                                        </div>
+                                        <div class="col" >
+                        
+                                            <div class="card border-0 text-center h-100 extraction-harris-source-image-container" style="width: 18rem;">
+                                                <div class="card-header border-0 h-100 p-0 d-flex align-items-center">
+                                                    <img src="" class="card-img-top extraction-harris-source-image" alt="...">
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around">
+                                                    <span class="card-muted">Harris corner detection</span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill extraction-harris-source-points-count"></span></span>
+                                                </div>
+                                            </div>
+                
+                                        </div>
+                                        <div class="col" >
+                                            <div class="card text-center extraction-points-source-image-container" style="width: 18rem; max-height: 470px;">
+                                                <div class="card-body" style="overflow-y: scroll;">
+                                                    <ul class="list-group extraction-harris-points"></ul>
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around">
+                                                    <span class="card-muted">Important feature points</span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill extraction-harris-source-points-count"></span></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="watermarking-heading">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#watermarking-collapse" aria-expanded="false" aria-controls="watermarking-collapse">
+                                    <h1 class="display-6" style="font-size: 1.5rem;">#2 Extraction</h1>
+                                </button>
+                            </h2>
+                            <div id="watermarking-collapse" class="accordion-collapse collapse" aria-labelledby="watermarking-heading" data-bs-parent_="#insertion-accordion">
+                                <div class="accordion-body pt-5 pb-5">
+
+                                    <div class="row" >
+                                        <div class="col">
+                                            <div class="card text-center">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Watermarking Key</h5>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text" id="watermarking-key">Key (16)</span>
+                                                        <input type="text" class="form-control extraction-key" placeholder="extraction key" value="#My_SickRat_Key#">
+                                                    </div>
+                                                    <a class="btn btn-success btn-image-extraction">Extraction process</a>
+                                                </div>
+                                            </div>
+                                            <div class="card text-center mt-4">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Binary information</h5>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">Binary</span>
+                                                        <textarea class="form-control extraction-binary" aria-label="Binary information" rows="4"></textarea>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col">
+                                            <div class="card">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Patient information</h5>
+                                                </div>
+                                                <div class="card-body extraction-patient-info">
+                                                    <div class="row" >
+                                                        <div class="col-4 " >First Name</div><div class="col-8 extraction-first-name" ></div>
+                                                    </div>
+                                                    <div class="row" >
+                                                        <div class="col-4" >Last Name</div><div class="col-8 extraction-last-name" ></div>
+                                                    </div>
+                                                    <div class="row" >
+                                                        <div class="col-4" >Age</div><div class="col-8 extraction-age" ></div>
+                                                    </div>
+                                                    <div class="row" >
+                                                        <div class="col-4" >Sex</div><div class="col-8 extraction-sex" ></div>
+                                                    </div>
+                                                    <div class="row" >
+                                                        <div class="col-4" >Clinic Name</div><div class="col-8 extraction-clinic-name" ></div>
+                                                    </div>
+                                                    <div class="row" >
+                                                        <div class="col-4" >Hospital Signature</div><div class="col-8 extraction-hospital-signature" ></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+                <div class="tab-pane fade p-4" id="attack-tab-pane" role="tabpanel" aria-labelledby="attack-tab" tabindex="0">
+
+                    <div class="accordion accordion-flush" id="attack-accordion">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="attack-heading">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#attack-collapse" aria-expanded="false" aria-controls="attack-collapse">
+                                    <h1 class="display-6" style="font-size: 1.5rem;">#1 Attacking patient data using filters</h1>
+                                </button>
+                            </h2>
+                            <div id="attack-collapse" class="accordion-collapse collapse" aria-labelledby="attack-heading" data-bs-parent_="#attack-accordion" >
+                                <div class="accordion-body pt-5 pb-5" >
+                                
+                                    <div class="row" >
+                                        <div class="col" >
+                                            <div class="card border-0 text-center h-100 attack-source-image-container" style="width: 18rem;">
+                                                <div class="card-header border-0 bg-transparent h-100 p-0 d-flex align-items-center">
+                                                    <img src="" class="card-img-top attack-source-image" alt="...">
+                                                </div>
+                                                <div class="card-body w-100">
+                                                    <button class="btn btn-secondary m-0 btn-browse-source-image">Choose image ...</button>
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around attack-info-source-image">
+                                                    <span class="card-muted text-truncate attack-source-image-name"></span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill attack-source-image-size"></span></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col" >
+                                            <div class="card h-100 text-center attack-filter-container" style="width: 18rem; max-height: 470px;">
+                                                <div class="card-header">
+                                                    <h5 class="card-title">Select Filter</h5>
+                                                </div>
+                                                <div class="card-body d-flex align-items-center" style="overflow-y: auto;">
+                                                    <div id="filter-container" >
+                                                        <input type="radio" class="btn-check" name="filter" value="1" id="filter-1" autocomplete="off" >
+                                                        <label class="btn btn-outline-info m-1" for="filter-1">Blur</label>
+
+                                                        <input type="radio" class="btn-check" name="filter" value="2" id="filter-2" autocomplete="off">
+                                                        <label class="btn btn-outline-primary m-1" for="filter-2">Averaging</label>
+
+                                                        <input type="radio" class="btn-check" name="filter" value="3" id="filter-3" autocomplete="off">
+                                                        <label class="btn btn-outline-dark m-1" for="filter-3">Identity</label>
+
+                                                        <input type="radio" class="btn-check" name="filter" value="4" id="filter-4" autocomplete="off">
+                                                        <label class="btn btn-outline-dark m-1" for="filter-4">Sharpening</label>
+
+                                                        <input type="radio" class="btn-check" name="filter" value="5" id="filter-5" autocomplete="off">
+                                                        <label class="btn btn-outline-secondary m-1" for="filter-5">Gaussian</label>
+
+                                                        <input type="radio" class="btn-check" name="filter" value="6" id="filter-6" autocomplete="off">
+                                                        <label class="btn btn-outline-success m-1" for="filter-6">Median</label>
+
+                                                        <input type="radio" class="btn-check" name="filter" value="7" id="filter-7" autocomplete="off">
+                                                        <label class="btn btn-outline-danger m-1" for="filter-7">Bilateral</label>
+
+                                                        <input type="radio" class="btn-check" name="filter" value="8" id="filter-8" autocomplete="off">
+                                                        <label class="btn btn-outline-warning m-1" for="filter-8">Sobel</label>
+                                                    </div>
+                                                </div>
+                                                <div class="card-footer bg-transparent_ border-0_" >
+                                                    <div class="input-group mb-3">
+                                                        <span class="input-group-text">Filter Value</span>
+                                                        <input type="number" step="1" min="0" max="50" id="filter-value" class="form-control filter-value" value="1">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col" >
+                                            <div class="card border-0 text-center h-100 attack-image-container" style="width: 18rem;">
+                                                <div class="card-header border-0 h-100 p-0 d-flex align-items-center">
+                                                    <img src="" class="card-img-top attack-image" alt="...">
+                                                </div>
+                                                <div class="card-footer border d-flex justify-content-around">
+                                                    <span class="card-muted text-truncate "><a href="#" class="link attack-image-link">Download</a></span>
+                                                    <span class="card-muted"><span class="badge bg-primary rounded-pill attack-image-size"></span></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+
+        <pre>
+
+
+
+
+
+
+
+
+
+
+
+        </pre>
+
+    </body>
+</html>
