@@ -38,12 +38,12 @@ install required by typing:
 
 ## Results
 
-#### Insertion
+#### Data Insertion
 ![](https://github.com/DEVLOKER/Watermarking-Medical-Image/blob/main/screenshots/insertion.gif)
 
-#### Extraction
+#### Data Extraction
 ![](https://github.com/DEVLOKER/Watermarking-Medical-Image/blob/main/screenshots/extraction.gif)
 
-#### Attacks
+#### Watermarked Image Attacks
 ![](https://github.com/DEVLOKER/Watermarking-Medical-Image/blob/main/screenshots/attack.gif)
 
